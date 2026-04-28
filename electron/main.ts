@@ -195,6 +195,10 @@ if (!gotSingleInstanceLock) {
 function createWindow(): void {
   const { width: screenWidth, height: screenHeight } =
     screen.getPrimaryDisplay().workAreaSize;
+  const appIconPath =
+    process.platform === "darwin"
+      ? path.join(ROOT, "resources", "icon.icns")
+      : path.join(ROOT, "resources", "icon.ico");
 
   mainWindow = new BrowserWindow({
     // ── Dimensions — small overlay-style window, draggable ──────────────
@@ -227,8 +231,8 @@ function createWindow(): void {
 
     // ── Appearance ───────────────────────────────────────────────────────
     backgroundColor: "#0f1117",
-    icon: path.join(ROOT, "resources", "icon.ico"),
-    title: "NeoNexus Copilot",
+    icon: appIconPath,
+    title: "Strategixinsights",
   });
 
   // ── Stealth hardening (must be called after BrowserWindow construction) ─

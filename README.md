@@ -1,6 +1,16 @@
-# NeoNexus User App (Mac)
+# NeoNexus Copilot (Mac)
 
-Standalone user desktop app repository for macOS testing.
+Standalone desktop app repository for macOS testing.
+
+## One-Command DMG Build (Mac)
+
+Run this on a Mac machine from the app folder:
+
+```bash
+npm run dist:mac:one-command
+```
+
+This builds the updated universal DMG and prints the file path from `release/`.
 
 Default release command builds a universal DMG so one artifact supports both Intel and Apple Silicon Macs.
 

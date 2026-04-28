@@ -59,7 +59,7 @@ export function TitleBar() {
               background: 'var(--accent)', display: 'inline-block', flexShrink: 0,
             }} />
             <span style={{ color: 'var(--text-secondary)', fontSize: '12px', letterSpacing: '0.08em', fontWeight: 500 }}>
-              {`NEONEXUS · ${(username || 'USER').toUpperCase()}`}
+              {`Strategixinsights · ${(username || 'USER').toUpperCase()}`}
             </span>
           </>
         )}

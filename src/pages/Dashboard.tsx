@@ -43,7 +43,6 @@ export function Dashboard() {
   const decrementSessionsAvailable = useStore((s) => s.decrementSessionsAvailable);
 
   // ── Chat message actions ───────────────────────────────────────────────────
-  const addUserMessage = useStore((s) => s.addUserMessage);
   const setAssistantMessage = useStore((s) => s.setAssistantMessage);
   const clearChat = useStore((s) => s.clearChat);
 
@@ -422,14 +421,8 @@ export function Dashboard() {
     setProcessing(true);
     setStatus('Getting AI help...');
     
-    // Get last few lines for context display
+    // Keep transcript context local for backend/fallback processing only.
     const contextLines = liveTranscript.slice(-15);
-    const contextText = contextLines.map(l => l.text).join('\n');
-    
-    // Show what we're sending as user message
-    if (contextText.trim()) {
-      addUserMessage(`[Context: Last ${contextLines.length} lines]\n${contextText}`);
-    }
 
     try {
       const result = await window.electronAPI.sessionHelp({
@@ -482,7 +475,6 @@ export function Dashboard() {
     processing,
     sessionId,
     liveTranscript,
-    addUserMessage,
     setAssistantMessage,
     setStatus,
     setError,

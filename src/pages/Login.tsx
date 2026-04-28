@@ -87,26 +87,10 @@ export function Login({ onLoginSuccess }: LoginProps) {
         gap: '28px',
       }}
     >
-      {/* ── Logo mark ─────────────────────────────────────────────────── */}
+      {/* ── Brand ─────────────────────────────────────────────────────── */}
       <div style={{ textAlign: 'center' }}>
-        <div style={{
-          width: '40px', height: '40px', borderRadius: '10px',
-          background: 'var(--accent-muted)',
-          border: '1px solid rgba(0,229,204,0.2)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 14px',
-        }}>
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-            <path
-              d="M10 2L17 6v8l-7 4L3 14V6l7-4z"
-              stroke="var(--accent)" strokeWidth="1.2"
-              fill="none" strokeLinejoin="round"
-            />
-            <circle cx="10" cy="10" r="2.5" fill="var(--accent)" opacity="0.7" />
-          </svg>
-        </div>
         <p style={{ color: 'var(--text-secondary)', fontSize: '12px', letterSpacing: '0.1em', fontWeight: 500 }}>
-          NEONEXUS COPILOT
+          Strategixinsights
         </p>
       </div>
 

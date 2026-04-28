@@ -7,3 +7,5 @@ resources/ffmpeg.exe
 .DS_Store
 .env.local
 .env.*.local
+.env
+.env.production
