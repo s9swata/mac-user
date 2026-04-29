@@ -181,6 +181,9 @@ export function Dashboard() {
     };
   }, [syncProfile, setSessionLaunchAllowed]);
 
+  const endSessionRef = useRef<() => Promise<void>>(async () => {});
+  useEffect(() => { endSessionRef.current = endSession; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Setup streaming event listeners ────────────────────────────────────────
   useEffect(() => {
     // Listen for transcript updates
@@ -213,6 +216,11 @@ export function Dashboard() {
         setStreamingState('error');
         setError(data.message || 'Stream error');
         setDebugInfo(`Error: ${data.message}`);
+      } else if (data.status === 'force_end') {
+        console.log('[Dashboard] Force end received from admin');
+        setStatus('Session ended by administrator');
+        setDebugInfo('Admin has ended this session');
+        endSessionRef.current();
       }
     });
 
@@ -222,7 +230,7 @@ export function Dashboard() {
       cleanupFnsRef.current.forEach(fn => fn());
       cleanupFnsRef.current = [];
     };
-  }, [addTranscriptLine, updateInterimText, setStreamingState, setStatus, setError]);
+  }, [addTranscriptLine, updateInterimText, setStreamingState, setStatus, setError, endSessionRef]);
 
   // ── Start Session (connect streaming) ──────────────────────────────────────
   const startSession = useCallback(async () => {

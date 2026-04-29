@@ -854,6 +854,13 @@ function registerIpcHandlers(): void {
               settle({ success: false, error: message });
             }
           }
+          if (data?.type === "force_end") {
+            console.log("[IPC] STREAM force_end received from admin");
+            mainWindow?.webContents.send(IpcChannels.STREAM_STATUS, {
+              status: "force_end",
+              message: "Session ended by administrator",
+            });
+          }
         });
 
         ws.on("error", (err: Error) => {
