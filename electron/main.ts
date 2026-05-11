@@ -24,6 +24,7 @@ import {
   screen,
   desktopCapturer,
   session,
+  globalShortcut,
 } from "electron";
 import * as path from "path";
 import * as fs from "fs";
@@ -90,6 +91,11 @@ let backendUrl: string = DEFAULT_BACKEND_URL;
 let deepgramWs: WebSocket | null = null;
 let currentSessionId: string | null = null;
 let lastStreamSessionId: string | null = null;
+let streamReconnectEnabled = false;
+let streamReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let streamReconnectAttempts = 0;
+const MAX_RECONNECT_ATTEMPTS = 999;
+const RECONNECT_DELAY_MS = 2000;
 
 type SessionStartResult = { allowed: boolean; active_slot?: number | null; reason?: string };
 let sessionStartInFlight: Promise<SessionStartResult> | null = null;
@@ -312,6 +318,7 @@ app.on("window-all-closed", () => {
 });
 
 function cleanupAndQuit(): void {
+  globalShortcut.unregisterAll();
   app.quit();
 }
 
@@ -808,6 +815,9 @@ function registerIpcHandlers(): void {
               lastStreamSessionId = backendSessionId;
             }
 
+            streamReconnectEnabled = true;
+            streamReconnectAttempts = 0;
+
             mainWindow?.webContents.send(IpcChannels.STREAM_STATUS, {
               status: "connected",
               message: "Connected to Deepgram",
@@ -882,9 +892,7 @@ function registerIpcHandlers(): void {
           const reasonText = reasonBuffer ? reasonBuffer.toString("utf-8") : "";
           console.log("[IPC] STREAM websocket closed:", code, reasonText || "(no reason)");
 
-          if (deepgramWs === ws) {
-            deepgramWs = null;
-          }
+          if (deepgramWs === ws) deepgramWs = null;
           currentSessionId = null;
 
           if (!settled) {
@@ -893,6 +901,70 @@ function registerIpcHandlers(): void {
               success: false,
               error: reasonText || `Stream closed before readiness (code ${code})`,
             });
+            return;
+          }
+
+          if (streamReconnectEnabled && streamReconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            streamReconnectAttempts++;
+            console.log(`[IPC] STREAM closed, reconnecting in ${RECONNECT_DELAY_MS}ms (attempt ${streamReconnectAttempts})...`);
+            mainWindow?.webContents.send(IpcChannels.STREAM_STATUS, {
+              status: "reconnecting",
+              message: `Connection lost, reconnecting... (${streamReconnectAttempts})`,
+            });
+
+            streamReconnectTimer = setTimeout(async () => {
+              if (!streamReconnectEnabled || !authToken) return;
+              const wsBase = toWebSocketBaseUrl(backendUrl);
+              const wsUrl = `${wsBase}/ws/deepgram/stream?token=${encodeURIComponent(authToken)}`;
+              try {
+                const newWs = new WebSocket(wsUrl);
+                deepgramWs = newWs;
+                newWs.on("open", () => {
+                  streamReconnectAttempts = 0;
+                  console.log("[IPC] STREAM reconnected");
+                });
+                newWs.on("message", (rawData: RawData) => {
+                  const text = Buffer.isBuffer(rawData) ? rawData.toString("utf-8") : String(rawData);
+                  let data: any;
+                  try { data = JSON.parse(text); } catch { return; }
+                  if (data?.type === "connected") {
+                    const sid = typeof data.session_id === "string" ? data.session_id : null;
+                    if (sid) { currentSessionId = sid; lastStreamSessionId = sid; }
+                    mainWindow?.webContents.send(IpcChannels.STREAM_STATUS, { status: "connected", message: "Reconnected to Deepgram" });
+                  } else if (data?.type === "transcript") {
+                    const transcriptText = typeof data.text === "string" ? data.text.trim() : "";
+                    if (!transcriptText) return;
+                    const rawTimestamp = data.timestamp;
+                    const timestamp = typeof rawTimestamp === "number"
+                      ? (rawTimestamp > 1_000_000_000_000 ? rawTimestamp : Math.round(rawTimestamp * 1000))
+                      : Date.now();
+                    mainWindow?.webContents.send(IpcChannels.STREAM_TRANSCRIPT, {
+                      type: "transcript",
+                      speaker: typeof data.speaker === "string" ? data.speaker : "speaker-0",
+                      text: transcriptText,
+                      is_final: Boolean(data.is_final),
+                      confidence: typeof data.confidence === "number" ? data.confidence : 1,
+                      timestamp,
+                    });
+                  } else if (data?.type === "force_end") {
+                    streamReconnectEnabled = false;
+                    mainWindow?.webContents.send(IpcChannels.STREAM_STATUS, { status: "force_end", message: "Session ended by administrator" });
+                  }
+                });
+                newWs.on("error", (err: Error) => console.error("[IPC] STREAM reconnect error:", err.message));
+                newWs.on("close", (c: number, r: Buffer) => {
+                  if (deepgramWs === newWs) deepgramWs = null;
+                  currentSessionId = null;
+                  if (streamReconnectEnabled) {
+                    streamReconnectAttempts++;
+                    mainWindow?.webContents.send(IpcChannels.STREAM_STATUS, { status: "reconnecting", message: `Reconnecting... (${streamReconnectAttempts})` });
+                    streamReconnectTimer = setTimeout(() => {}, RECONNECT_DELAY_MS);
+                  }
+                });
+              } catch (err: any) {
+                console.error("[IPC] STREAM reconnect exception:", err.message);
+              }
+            }, RECONNECT_DELAY_MS);
             return;
           }
 
@@ -922,6 +994,12 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannels.STREAM_DISCONNECT, async () => {
     console.log("[IPC] STREAM_DISCONNECT called");
+    streamReconnectEnabled = false;
+    if (streamReconnectTimer) {
+      clearTimeout(streamReconnectTimer);
+      streamReconnectTimer = null;
+    }
+    streamReconnectAttempts = 0;
     const sessionId = currentSessionId || lastStreamSessionId;
 
     if (deepgramWs) {
@@ -974,7 +1052,7 @@ function registerIpcHandlers(): void {
     }
 
     const requestedLines = payload.contextLines ?? loadSettings().defaultContextLines;
-    const contextLines = Math.max(1, Math.min(15, Math.floor(requestedLines || 15)));
+    const contextLines = Math.max(1, Math.min(50, Math.floor(requestedLines || 30)));
 
     const result = await backendFetch<{
       success: boolean;
@@ -1086,5 +1164,22 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle(IpcChannels.AUDIO_GET_RECORDING_PATH, async () => {
     return { path: currentRecordingPath, isRecording: !!currentRecordingStream };
+  });
+  // ── Global hotkey (F1) — fires even when app has no focus ────────────
+  ipcMain.handle(IpcChannels.HOTKEY_REGISTER, async () => {
+    globalShortcut.unregister("F1");
+    const registered = globalShortcut.register("F1", () => {
+      if (mainWindow) {
+        mainWindow.webContents.send(IpcChannels.HOTKEY_TRIGGERED);
+      }
+    });
+    console.log("[IPC] HOTKEY_REGISTER F1:", registered ? "success" : "failed");
+    return { success: registered };
+  });
+
+  ipcMain.handle(IpcChannels.HOTKEY_UNREGISTER, async () => {
+    globalShortcut.unregister("F1");
+    console.log("[IPC] HOTKEY_UNREGISTER F1");
+    return { success: true };
   });
 }

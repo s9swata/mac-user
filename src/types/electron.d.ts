@@ -18,7 +18,7 @@ export interface TranscriptUpdate {
 }
 
 export interface StreamStatus {
-  status: "connected" | "disconnected" | "error";
+  status: "connected" | "disconnected" | "error" | "reconnecting" | "force_end";
   message?: string;
   code?: number;
   reason?: string;
@@ -73,7 +73,9 @@ declare global {
       streamSendAudio: (audioChunk: ArrayBuffer) => Promise<{ success: boolean; error?: string }>;
       onStreamTranscript: (callback: (data: TranscriptUpdate) => void) => () => void;
       onStreamStatus: (callback: (data: StreamStatus) => void) => () => void;
-
+      onHotkeyTriggered: (callback: () => void) => () => void;
+      hotkeyRegister: () => Promise<{ success: boolean }>;
+      hotkeyUnregister: () => Promise<{ success: boolean }>;
       // ── Hotkey help ──────────────────────────────────────────────────
       sessionHelp: (payload?: { sessionId?: string; contextLines?: number }) => Promise<{
         success: boolean;

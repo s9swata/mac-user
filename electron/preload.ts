@@ -1,24 +1,5 @@
-/**
- * electron/preload.ts
- * ====================
- * Runs in an isolated context between main and renderer.
- * Exposes a minimal, typed API surface via contextBridge.
- *
- * RULE: Nothing in here should contain business logic.
- *       It is a pure thin-wire translation layer:
- *           renderer calls window.electronAPI.foo(args)
- *           → preload calls ipcRenderer.invoke("channel", args)
- *           → main process handles it and returns a result.
- *
- * The renderer never sees ipcRenderer directly (contextIsolation: true).
- */
-
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 import { IpcChannels } from "./ipc-handlers";
-
-// ── Type definitions for the exposed API ─────────────────────────────────────
-// Keep these in sync with the renderer-side type declaration in
-// src/types/electron.d.ts so TypeScript is happy on both sides.
 
 export interface TranscriptUpdate {
   type: "transcript";
@@ -30,7 +11,7 @@ export interface TranscriptUpdate {
 }
 
 export interface StreamStatus {
-  status: "connected" | "disconnected" | "error";
+  status: "connected" | "disconnected" | "error" | "reconnecting" | "force_end";
   message?: string;
   code?: number;
   reason?: string;
@@ -42,7 +23,6 @@ export interface AppSettings {
 }
 
 export interface ElectronAPI {
-  // Auth
   login:  (token: string, userId: number, backendUrl?: string) => Promise<{ success: boolean }>;
   loginWithCredentials: (username: string, password: string, backendUrl?: string) => Promise<{
     user: {
@@ -58,7 +38,6 @@ export interface ElectronAPI {
   }>;
   logout: () => Promise<{ success: boolean }>;
 
-  // Window controls
   minimiseWindow:          () => Promise<{ success: boolean }>;
   toggleMaximiseWindow:    () => Promise<{ success: boolean; isMaximized: boolean }>;
   closeWindow:             () => Promise<{ success: boolean }>;
@@ -66,25 +45,21 @@ export interface ElectronAPI {
   setAlwaysOnTop:          (value: boolean) => void;
   setContentProtection:    (value: boolean) => void;
 
-  // Utilities
   getAppVersion:  () => Promise<string>;
   getSystemInfo:  () => Promise<Record<string, string>>;
   showError:      (title: string, message: string) => Promise<void>;
 
-  // User session pipeline (legacy)
   sessionStart: () => Promise<{ allowed: boolean; active_slot?: number | null; reason?: string }>;
   sessionRespond: (payload: { utterance: string; history: string[] }) => Promise<{ should_respond: boolean; answer?: string; reason?: string }>;
   sessionTranscribe: (payload: { audio_base64: string; audio_mime_type?: string }) => Promise<{ transcript: string[] }>;
   sessionEnd: (payload: { transcript: string[]; audio_base64?: string; audio_mime_type?: string; session_id?: string }) => Promise<{ summary: string }>;
 
-  // Streaming transcription
   streamConnect: () => Promise<{ success: boolean; sessionId?: string; error?: string }>;
   streamDisconnect: () => Promise<{ success: boolean; sessionId?: string }>;
   streamSendAudio: (audioChunk: ArrayBuffer) => Promise<{ success: boolean; error?: string }>;
   onStreamTranscript: (callback: (data: TranscriptUpdate) => void) => () => void;
   onStreamStatus: (callback: (data: StreamStatus) => void) => () => void;
 
-  // Hotkey help
   sessionHelp: (payload?: { sessionId?: string; contextLines?: number }) => Promise<{
     success: boolean;
     context?: string;
@@ -92,20 +67,22 @@ export interface ElectronAPI {
     reason?: string;
   }>;
 
-  // Settings
+  // Global hotkey
+  hotkeyRegister: () => Promise<{ success: boolean }>;
+  hotkeyUnregister: () => Promise<{ success: boolean }>;
+  onHotkeyTriggered: (callback: () => void) => () => void;
+
   getSettings: () => Promise<AppSettings>;
   setSettings: (settings: Partial<AppSettings>) => Promise<{ success: boolean; settings: AppSettings }>;
   getAudioStoragePath: () => Promise<string>;
   setAudioStoragePath: (path: string) => Promise<{ success: boolean; path: string }>;
   browseFolder: () => Promise<{ success: boolean; canceled?: boolean; path?: string }>;
 
-  // Local audio recording
   startAudioRecording: () => Promise<{ success: boolean; path?: string; error?: string }>;
   stopAudioRecording: () => Promise<{ success: boolean; path?: string; error?: string }>;
   writeAudioChunk: (chunk: ArrayBuffer) => void;
   getRecordingPath: () => Promise<{ path: string | null; isRecording: boolean }>;
 
-  // User profile sync
   getUserProfile: () => Promise<{
     id: number;
     username: string;
@@ -118,9 +95,7 @@ export interface ElectronAPI {
   }>;
 }
 
-// ── Expose API ────────────────────────────────────────────────────────────────
 contextBridge.exposeInMainWorld("electronAPI", {
-  // ── Auth ──────────────────────────────────────────────────────────────
   login: (token: string, userId: number, backendUrl?: string) =>
     ipcRenderer.invoke(IpcChannels.LOGIN, { token, userId, backendUrl }),
 
@@ -130,7 +105,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   logout: () =>
     ipcRenderer.invoke(IpcChannels.LOGOUT),
 
-  // ── Window controls ───────────────────────────────────────────────────
   minimiseWindow: () =>
     ipcRenderer.invoke(IpcChannels.WINDOW_MINIMISE),
 
@@ -149,7 +123,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setContentProtection: (value: boolean) =>
     ipcRenderer.send(IpcChannels.WINDOW_TOGGLE_CONTENT_PROTECTION, value),
 
-  // ── Utilities ─────────────────────────────────────────────────────────
   getAppVersion: () =>
     ipcRenderer.invoke(IpcChannels.GET_APP_VERSION),
 
@@ -159,7 +132,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   showError: (title: string, message: string) =>
     ipcRenderer.invoke(IpcChannels.SHOW_ERROR_DIALOG, { title, message }),
 
-  // ── User session pipeline (legacy) ────────────────────────────────────
   sessionStart: () =>
     ipcRenderer.invoke(IpcChannels.SESSION_START),
 
@@ -172,7 +144,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   sessionEnd: (payload: { transcript: string[]; audio_base64?: string; audio_mime_type?: string; session_id?: string }) =>
     ipcRenderer.invoke(IpcChannels.SESSION_END, payload),
 
-  // ── Streaming transcription ───────────────────────────────────────────
   streamConnect: () =>
     ipcRenderer.invoke(IpcChannels.STREAM_CONNECT),
 
@@ -185,7 +156,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onStreamTranscript: (callback: (data: TranscriptUpdate) => void) => {
     const handler = (_event: IpcRendererEvent, data: TranscriptUpdate) => callback(data);
     ipcRenderer.on(IpcChannels.STREAM_TRANSCRIPT, handler);
-    // Return unsubscribe function
     return () => ipcRenderer.removeListener(IpcChannels.STREAM_TRANSCRIPT, handler);
   },
 
@@ -195,11 +165,22 @@ contextBridge.exposeInMainWorld("electronAPI", {
     return () => ipcRenderer.removeListener(IpcChannels.STREAM_STATUS, handler);
   },
 
-  // ── Hotkey help ──────────────────────────────────────────────────────
   sessionHelp: (payload?: { sessionId?: string; contextLines?: number }) =>
     ipcRenderer.invoke(IpcChannels.SESSION_HELP, payload || {}),
 
-  // ── Settings ──────────────────────────────────────────────────────────
+  // Global hotkey
+  hotkeyRegister: () =>
+    ipcRenderer.invoke(IpcChannels.HOTKEY_REGISTER),
+
+  hotkeyUnregister: () =>
+    ipcRenderer.invoke(IpcChannels.HOTKEY_UNREGISTER),
+
+  onHotkeyTriggered: (callback: () => void) => {
+    const handler = (_event: IpcRendererEvent) => callback();
+    ipcRenderer.on(IpcChannels.HOTKEY_TRIGGERED, handler);
+    return () => ipcRenderer.removeListener(IpcChannels.HOTKEY_TRIGGERED, handler);
+  },
+
   getSettings: () =>
     ipcRenderer.invoke(IpcChannels.SETTINGS_GET),
 
@@ -215,7 +196,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   browseFolder: () =>
     ipcRenderer.invoke(IpcChannels.SETTINGS_BROWSE_FOLDER),
 
-  // ── Local audio recording ─────────────────────────────────────────────
   startAudioRecording: () =>
     ipcRenderer.invoke(IpcChannels.AUDIO_START_RECORDING),
 
@@ -228,7 +208,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getRecordingPath: () =>
     ipcRenderer.invoke(IpcChannels.AUDIO_GET_RECORDING_PATH),
 
-  // ── User profile sync ─────────────────────────────────────────────────
   getUserProfile: () =>
     ipcRenderer.invoke(IpcChannels.USER_GET_PROFILE),
 } satisfies ElectronAPI);

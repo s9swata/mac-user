@@ -212,6 +212,10 @@ export function Dashboard() {
         setStreamingState('disconnected');
         setStatus('Disconnected');
         setDebugInfo(data.message || 'Stream disconnected');
+      } else if (data.status === 'reconnecting') {
+        setStatus(data.message || 'Reconnecting...');
+        setDebugInfo('Connection lost, attempting to reconnect...');
+        // Don't change streamingState — keep session active during reconnect
       } else if (data.status === 'error') {
         setStreamingState('error');
         setError(data.message || 'Stream error');
@@ -428,14 +432,18 @@ export function Dashboard() {
     
     setProcessing(true);
     setStatus('Getting AI help...');
-    
+    const processingTimeout = setTimeout(() => {
+      setProcessing(false);
+      setStatus('Streaming - listening...');
+    }, 20000);
+
     // Keep transcript context local for backend/fallback processing only.
-    const contextLines = liveTranscript.slice(-15);
+    const contextLines = liveTranscript.slice(-30);
 
     try {
       const result = await window.electronAPI.sessionHelp({
         sessionId: sessionId || undefined,
-        contextLines: 15,
+        contextLines: 30,
       });
 
       if (result.success && result.answer) {
@@ -477,6 +485,7 @@ export function Dashboard() {
       setError(msg);
       setDebugInfo(`Error: ${msg}`);
     } finally {
+      clearTimeout(processingTimeout);
       setProcessing(false);
     }
   }, [
@@ -489,53 +498,45 @@ export function Dashboard() {
   ]);
 
   // ── Shift Hotkey Handler ───────────────────────────────────────────────────
-  const handleHelpHotkey = useCallback(
-    (e: KeyboardEvent) => {
-      const isShiftKey = e.code === 'ShiftLeft' || e.code === 'ShiftRight';
-      if (!isShiftKey || !sessionActive) {
-        return;
-      }
+  // ── Global hotkey via F1 (works even when app has no focus) ──────────
+  useEffect(() => {
+    if (!sessionActive) {
+      window.electronAPI.hotkeyUnregister();
+      return;
+    }
 
-      e.preventDefault();
-      e.stopPropagation();
+    window.electronAPI.hotkeyRegister();
 
-      if (e.repeat || processing) {
-        return;
-      }
-
+    const unsub = window.electronAPI.onHotkeyTriggered(() => {
       if (helpHotkeyDebounceRef.current) return;
       helpHotkeyDebounceRef.current = true;
-      setTimeout(() => {
-        helpHotkeyDebounceRef.current = false;
-      }, 500);
-
+      setTimeout(() => { helpHotkeyDebounceRef.current = false; }, 500);
       blurActiveElement();
       requestHelp();
-    },
-    [sessionActive, processing, requestHelp, blurActiveElement]
-  );
+    });
 
-  const preventHelpHotkeyKeyup = useCallback(
-    (e: KeyboardEvent) => {
+    return () => {
+      unsub();
+      window.electronAPI.hotkeyUnregister();
+    };
+  }, [sessionActive, requestHelp, blurActiveElement]);
+
+  // ── Shift fallback when app IS focused ───────────────────────────────
+  useEffect(() => {
+    const handleKeydown = (e: KeyboardEvent) => {
       const isShiftKey = e.code === 'ShiftLeft' || e.code === 'ShiftRight';
-      if (!isShiftKey || !sessionActive) {
-        return;
-      }
+      if (!isShiftKey || !sessionActive || e.repeat || processing) return;
+      if (helpHotkeyDebounceRef.current) return;
+      helpHotkeyDebounceRef.current = true;
+      setTimeout(() => { helpHotkeyDebounceRef.current = false; }, 500);
       e.preventDefault();
       e.stopPropagation();
-    },
-    [sessionActive]
-  );
-
-  // ── Attach/detach shift hotkey listener ────────────────────────────────────
-  useEffect(() => {
-    window.addEventListener('keydown', handleHelpHotkey, true);
-    window.addEventListener('keyup', preventHelpHotkeyKeyup, true);
-    return () => {
-      window.removeEventListener('keydown', handleHelpHotkey, true);
-      window.removeEventListener('keyup', preventHelpHotkeyKeyup, true);
+      blurActiveElement();
+      requestHelp();
     };
-  }, [handleHelpHotkey, preventHelpHotkeyKeyup]);
+    window.addEventListener('keydown', handleKeydown, true);
+    return () => window.removeEventListener('keydown', handleKeydown, true);
+  }, [sessionActive, processing, requestHelp, blurActiveElement]);
 
   // ── Format elapsed time ────────────────────────────────────────────────────
   const formatElapsed = (seconds: number): string => {
