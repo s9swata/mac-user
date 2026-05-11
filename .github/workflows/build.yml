@@ -1,57 +1,42 @@
-name: Build macOS DMG
+name: Build mac DMG (universal)
 
 on:
+  workflow_dispatch: {}
   push:
-    branches:
-      - main
-      - master
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
-  build-mac:
+  build-dmg:
+    name: Build universal mac DMG
     runs-on: macos-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
+          node-version: '18'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Set backend URL
-        run: echo "VITE_BACKEND_URL=https://api.strategixinsightsadmin.tech" > .env
+      - name: Build renderer & electron
+        run: npm run build
 
-      - name: Build DMG Intel x64
+      - name: Build mac DMG (universal)
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          EP_GH_IGNORE_TIME: true
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:mac:intel
+          # Optional notarization/signing secrets (set in repo Secrets if you want signing + notarize)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run dist:mac
 
-      - name: Build DMG Apple Silicon arm64
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false
-          EP_GH_IGNORE_TIME: true
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:mac:apple
-
-      - name: Upload Intel DMG
+      - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Strategixinsights-mac-intel
-          path: release/*-x64.dmg
-          retention-days: 30
+          name: mac-dmg
+          path: release/*.dmg
 
-      - name: Upload Apple Silicon DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: Strategixinsights-mac-arm64
-          path: release/*-arm64.dmg
-          retention-days: 30
+      - name: Show release files (debug)
+        run: ls -la release || true
